@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Performance Analyzer</title>
+  <style>
+    /* ── Reset & Tokens ────────────────────────────────────────────────── */
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg-base: #0d0f12;
+      --bg-surface: #151820;
+      --bg-raised: #1c2030;
+      --bg-overlay: #222840;
+
+      --amber: #f5a623;
+      --amber-dim: #b87a18;
+      --amber-glow: rgba(245, 166, 35, 0.15);
+
+      --green: #3ddc84;
+      --red: #ff5f5f;
+      --blue: #4d9ef5;
+      --purple: #a78bfa;
+
+      --text-primary: #e8eaf0;
+      --text-muted: #6b7394;
+      --text-dim: #3d4560;
+
+      --border: rgba(255, 255, 255, 0.07);
+      --radius: 4px;
+      --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+      --font-ui: 'IBM Plex Sans', system-ui, sans-serif;
+    }
+
+    html,
+    body {
+      height: 100%;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      font-size: 13px;
+      line-height: 1.5;
+      overflow: hidden;
+    }
+
+    /* ── Layout ────────────────────────────────────────────────────────── */
+    #app {
+      display: grid;
+      grid-template-rows: 44px 1fr;
+      height: 100vh;
+    }
+
+    /* ── Toolbar ───────────────────────────────────────────────────────── */
+    #toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 16px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      position: relative;
+      z-index: 10;
+    }
+
+    #toolbar-logo {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      color: var(--amber);
+      text-transform: uppercase;
+    }
+
+    #toolbar-sep {
+      width: 1px;
+      height: 20px;
+      background: var(--border);
+    }
+
+    .toolbar-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .toolbar-btn:hover {
+      background: var(--bg-raised);
+      color: var(--text-primary);
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    .toolbar-btn.record-btn {
+      border-color: var(--amber-dim);
+      color: var(--amber);
+    }
+
+    .toolbar-btn.record-btn:hover {
+      background: var(--amber-glow);
+      border-color: var(--amber);
+    }
+
+    .toolbar-btn.record-btn.recording {
+      background: var(--amber-glow);
+      border-color: var(--amber);
+      color: var(--amber);
+      animation: pulse-border 1.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse-border {
+
+      0%,
+      100% {
+        box-shadow: 0 0 0 0 var(--amber-glow);
+      }
+
+      50% {
+        box-shadow: 0 0 0 4px var(--amber-glow);
+      }
+    }
+
+    .record-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--amber);
+    }
+
+    .recording .record-dot {
+      animation: blink 0.8s step-end infinite;
+    }
+
+    @keyframes blink {
+      50% {
+        opacity: 0;
+      }
+    }
+
+    #session-info {
+      margin-left: auto;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-dim);
+    }
+
+    /* ── Content ───────────────────────────────────────────────────────── */
+    #content {
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      overflow: hidden;
+    }
+
+    /* ── Metrics sidebar ───────────────────────────────────────────────── */
+    #metrics-sidebar {
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border);
+      padding: 16px 0;
+      overflow-y: auto;
+    }
+
+    .metric-group-label {
+      padding: 0 14px 6px;
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: 0.15em;
+      color: var(--text-dim);
+      text-transform: uppercase;
+    }
+
+    .metric-item {
+      display: flex;
+      flex-direction: column;
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border);
+      cursor: default;
+      transition: background 0.1s;
+    }
+
+    .metric-item:hover {
+      background: var(--bg-raised);
+    }
+
+    .metric-name {
+      font-size: 10px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      margin-bottom: 2px;
+    }
+
+    .metric-value {
+      font-family: var(--font-mono);
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-primary);
+      line-height: 1.2;
+    }
+
+    .metric-value.good {
+      color: var(--green);
+    }
+
+    .metric-value.needs-improvement {
+      color: var(--amber);
+    }
+
+    .metric-value.poor {
+      color: var(--red);
+    }
+
+    .metric-value.null {
+      color: var(--text-dim);
+    }
+
+    .metric-unit {
+      font-size: 10px;
+      font-weight: 400;
+      color: var(--text-muted);
+      margin-left: 2px;
+    }
+
+    /* ── Main panel ────────────────────────────────────────────────────── */
+    #main-panel {
+      display: grid;
+      grid-template-rows: 1fr 180px;
+      overflow: hidden;
+    }
+
+    #timeline-area {
+      padding: 16px;
+      overflow-y: auto;
+    }
+
+    .panel-section-title {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    /* ── Idle state ────────────────────────────────────────────────────── */
+    #idle-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      gap: 16px;
+      color: var(--text-dim);
+    }
+
+    #idle-state .idle-icon {
+      font-size: 40px;
+      opacity: 0.4;
+    }
+
+    #idle-state p {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.05em;
+    }
+
+    /* ── Issues panel ──────────────────────────────────────────────────── */
+    #issues-panel {
+      background: var(--bg-surface);
+      border-top: 1px solid var(--border);
+      padding: 10px 16px;
+      overflow-y: auto;
+    }
+
+    .issue-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+    }
+
+    .issue-item:last-child {
+      border-bottom: none;
+    }
+
+    .issue-badge {
+      flex-shrink: 0;
+      padding: 1px 6px;
+      border-radius: 2px;
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-top: 2px;
+    }
+
+    .issue-badge.critical {
+      background: rgba(255, 95, 95, 0.2);
+      color: var(--red);
+    }
+
+    .issue-badge.warning {
+      background: rgba(245, 166, 35, 0.2);
+      color: var(--amber);
+    }
+
+    .issue-badge.info {
+      background: rgba(77, 158, 245, 0.2);
+      color: var(--blue);
+    }
+
+    .issue-title {
+      color: var(--text-primary);
+    }
+
+    .issue-detail {
+      color: var(--text-muted);
+      font-size: 11px;
+      margin-top: 1px;
+    }
+
+    /* ── Status bar ────────────────────────────────────────────────────── */
+    #status-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 16px;
+      background: var(--bg-surface);
+      border-top: 1px solid var(--border);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-dim);
+      grid-column: 1 / -1;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-dim);
+    }
+
+    .status-dot.connected {
+      background: var(--green);
+    }
+
+    .status-dot.recording {
+      background: var(--amber);
+      animation: blink 0.8s step-end infinite;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app">
+    <div id="toolbar">
+      <span id="toolbar-logo">⚡ Perf</span>
+      <div id="toolbar-sep"></div>
+      <button class="toolbar-btn record-btn" id="record-btn">
+        <span class="record-dot"></span>
+        <span id="record-label">Record</span>
+      </button>
+      <button class="toolbar-btn" id="clear-btn">Clear</button>
+      <span id="session-info">Tab —</span>
+    </div>
+
+    <div id="content">
+      <div id="metrics-sidebar">
+        <div class="metric-group-label">Core Web Vitals</div>
+        <div class="metric-item" id="metric-lcp">
+          <span class="metric-name">LCP</span>
+          <span class="metric-value null" id="lcp-value">—</span>
+        </div>
+        <div class="metric-item" id="metric-cls">
+          <span class="metric-name">CLS</span>
+          <span class="metric-value null" id="cls-value">—</span>
+        </div>
+        <div class="metric-item" id="metric-inp">
+          <span class="metric-name">INP</span>
+          <span class="metric-value null" id="inp-value">—</span>
+        </div>
+        <div class="metric-item" id="metric-fcp">
+          <span class="metric-name">FCP</span>
+          <span class="metric-value null" id="fcp-value">—</span>
+        </div>
+        <div class="metric-item" id="metric-ttfb">
+          <span class="metric-name">TTFB</span>
+          <span class="metric-value null" id="ttfb-value">—</span>
+        </div>
+
+        <div class="metric-group-label" style="margin-top:12px;">Runtime</div>
+        <div class="metric-item">
+          <span class="metric-name">Long Tasks</span>
+          <span class="metric-value null" id="long-tasks-value">—</span>
+        </div>
+        <div class="metric-item">
+          <span class="metric-name">Heap Used</span>
+          <span class="metric-value null" id="heap-value">—</span>
+        </div>
+      </div>
+
+      <div id="main-panel">
+        <div id="timeline-area">
+          <div id="idle-state">
+            <span class="idle-icon">⏱</span>
+            <p>Press Record to start capturing</p>
+          </div>
+          <div id="recording-state" style="display:none">
+            <div class="panel-section-title">Timeline</div>
+            <canvas id="timeline-canvas" width="800" height="200"
+              style="width:100%; background:var(--bg-raised); border-radius:var(--radius);">
+            </canvas>
+          </div>
+        </div>
+
+        <div id="issues-panel">
+          <div class="panel-section-title">Issues</div>
+          <div id="issues-list">
+            <div class="issue-item" style="color:var(--text-dim); font-size:11px; font-family:var(--font-mono);">
+              No issues detected yet.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="status-bar">
+      <span class="status-dot" id="status-dot"></span>
+      <span id="status-text">Initializing…</span>
+    </div>
+  </div>
+
+  <script type="module" src="panel.js"></script>
+</body>
+
+</html>

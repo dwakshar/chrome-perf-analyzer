@@ -1,0 +1,26 @@
+{
+  "name": "devtools-perf-analyzer",
+  "version": "1.0.0",
+  "description": "Chrome DevTools Performance Analyzer Extension",
+  "private": true,
+  "scripts": {
+    "build": "webpack --config webpack.config.ts",
+    "watch": "webpack --config webpack.config.ts --watch",
+    "type-check": "tsc --noEmit",
+    "build:prod": "webpack --config webpack.config.ts --mode production"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "@types/node": "^20.19.37",
+    "@types/webpack": "^5.28.0",
+    "copy-webpack-plugin": "^12.0.2",
+    "ts-loader": "^9.5.4",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.9.3",
+    "webpack": "^5.105.4",
+    "webpack-cli": "^5.1.4"
+  },
+  "dependencies": {
+    "buffer": "^6.0.3"
+  }
+}
