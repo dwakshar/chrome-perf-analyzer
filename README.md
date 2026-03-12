@@ -47,23 +47,23 @@ Chrome Perf Analyzer connects those dots. It attaches to the Chrome DevTools Pro
 
 ```
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║                        FOUR INSTRUMENTS, ONE PANEL                         ║
-╠══════════════════╦═══════════════════════════╦════════════════════════════╗ ║
-║  CORE WEB VITALS ║   NETWORK MONITOR         ║   BUNDLE ANALYZER          ║ ║
-║  ──────────────  ║   ───────────────         ║   ───────────────          ║ ║
-║  LCP · CLS · INP ║  Per-request timing:      ║  Per-script analysis:      ║ ║
-║  FCP · TTFB      ║  DNS → Connect → SSL      ║  Parsed & transfer size    ║ ║
-║                  ║  → Send → TTFB → Receive  ║  Dead code %               ║ ║
-║  Live via        ║  P75 / P95 / P99 latency  ║  Library detection         ║ ║
-║  PerformanceObs  ║  Slow request alerts       ║  Bundler identification    ║ ║
-║                  ║  Network waterfall view    ║  0–100 performance score   ║ ║
-╠══════════════════╩═══════════════════════════╩════════════════════════════╣ ║
-║  ISSUE DETECTOR                                                            ║ ║
-║  ──────────────                                                            ║ ║
-║  Cross-signal analysis → ranked actionable issues → byte-savings estimates ║ ║
-║  Long tasks · Render-blocking scripts · Missing cache headers              ║ ║
-║  Large bundles · Dead code · Memory leaks · CLS culprits                  ║ ║
-╚════════════════════════════════════════════════════════════════════════════╝ ║
+║                        FOUR INSTRUMENTS, ONE PANEL                           ║
+╠══════════════════╦═══════════════════════════╦════════════════════════════╗  ║
+║  CORE WEB VITALS ║   NETWORK MONITOR         ║   BUNDLE ANALYZER          ║  ║
+║  ──────────────  ║   ───────────────         ║   ───────────────          ║  ║
+║  LCP · CLS · INP ║  Per-request timing:      ║  Per-script analysis:      ║  ║
+║  FCP · TTFB      ║  DNS → Connect → SSL      ║  Parsed & transfer size    ║  ║
+║                  ║  → Send → TTFB → Receive  ║  Dead code %               ║  ║
+║  Live via        ║  P75 / P95 / P99 latency  ║  Library detection         ║  ║
+║  PerformanceObs  ║  Slow request alerts      ║  Bundler identification    ║  ║
+║                  ║  Network waterfall view   ║  0–100 performance score   ║  ║
+╠══════════════════╩═══════════════════════════╩════════════════════════════╣  ║
+║  ISSUE DETECTOR                                                           ║  ║
+║  ──────────────                                                           ║  ║
+║  Cross-signal analysis → ranked actionable issues → byte-savings estimates║  ║
+║  Long tasks · Render-blocking scripts · Missing cache headers             ║  ║
+║  Large bundles · Dead code · Memory leaks · CLS culprits                  ║  ║
+╚═══════════════════════════════════════════════════════════════════════════╚══╝
 ```
 
 ---
@@ -75,40 +75,40 @@ Everything runs over the **Chrome DevTools Protocol** — the same wire protocol
 ```
  ┌──────────────────────────────────────────────────────────────────────────┐
  │  PAGE                                                                    │
- │  ┌──────────────────┐                    ┌──────────────────────────┐   │
- │  │  page-bridge.ts  │ ── postMessage ──► │  content-script.ts       │   │
- │  │  PerformanceObs  │                    │  CWV hub (LCP/CLS/INP)   │   │
- │  └──────────────────┘                   └────────────┬─────────────┘   │
- └────────────────────────────────────────────────────── │ ────────────────┘
+ │  ┌──────────────────┐                    ┌──────────────────────────┐    │
+ │  │  page-bridge.ts  │ ── postMessage ──► │  content-script.ts       │    │
+ │  │  PerformanceObs  │                    │  CWV hub (LCP/CLS/INP)   │    │
+ │  └──────────────────┘                    └────────────┬─────────────┘    │
+ └────────────────────────────────────────────────────── │ ─────────────────┘
                                            chrome.runtime.sendMessage
  ┌────────────────────────────────────────────────────── │ ────────────────┐
- │  SERVICE WORKER                         ◄─────────── ┘                  │
- │                                                                          │
- │  ┌─────────────────┐    ┌──────────────────────────────────────────┐   │
+ │  SERVICE WORKER                         ◄──────────── ┘                 │
+ │                                                                         │
+ │  ┌──────────────────┐    ┌──────────────────────────────────────────┐   │
  │  │  SessionManager  │    │  CDP via chrome.debugger.attach()        │   │
  │  │  storage.session │    │                                          │   │
- │  └─────────────────┘    │   Network.*            Debugger.*        │   │
+ │  └──────────────────┘    │   Network.*            Debugger.*        │   │
  │                          │   requestWillBeSent    scriptParsed      │   │
  │                          │   responseReceived     getScriptSource   │   │
  │                          │   loadingFinished                        │   │
  │                          │                        Profiler.*        │   │
  │                          │                        takePreciseCoverage│  │
- │                          │          ▼                    ▼          │   │
- │                          │   NetworkCollector      BundleAnalyzer   │   │
- │                          └──────────┬───────────────────┬──────────┘   │
+ │                          │          ▼                   ▼           │   │
+ │                          │   NetworkCollector     BundleAnalyzer    │   │
+ │                          └──────────┬───────────────────┬───────────┘   │
  │                                     │                   │               │
- │                          ┌──────────▼───────────────────▼──────────┐   │
+ │                          ┌──────────▼───────────────────▼───────────┐   │
  │                          │  timing-calculator  ·  script-classifier │   │
  │                          │  library-fingerprints  ·  issue-detector │   │
  │                          └───────────────────┬──────────────────────┘   │
  └──────────────────────────────────────────────│──────────────────────────┘
                                     push → METRICS_UPDATE
- ┌────────────────────────────────────────────── │ ────────────────────────┐
- │  DEVTOOLS PANEL                               ▼                         │
- │                                                                          │
- │  Score Gauge · Issue List · Detail Pane · Network Waterfall              │
+ ┌───────────────────────────────────────────── │ ─────────────────────────┐
+ │  DEVTOOLS PANEL                              ▼                          │
+ │                                                                         │
+ │  Score Gauge · Issue List · Detail Pane · Network Waterfall             │
  │  Severity filters · Stack traces · Recommendation engine                │
- └──────────────────────────────────────────────────────────────────────────┘
+ └─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Why a Service Worker, Not a Background Page
