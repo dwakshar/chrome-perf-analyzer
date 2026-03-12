@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="icons/banner.jpg"/>
+<img src="file:///C:/Users/user/Downloads/banner.jpg"/>
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.4-3178c6?style=flat-square&logo=typescript&logoColor=white)](#)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-4285F4?style=flat-square&logo=googlechrome&logoColor=white)](#)
