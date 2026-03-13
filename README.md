@@ -11,8 +11,7 @@
 
 <br/>
 
-> **A Chrome DevTools extension that wires directly into the browser's debug protocol
-> and tells you — in plain language — exactly why your page is slow.**
+A Chrome DevTools extension that wires directly into the browser's debug protocoland tells you — in plain language — exactly why your page is slow.
 
 <br/>
 
