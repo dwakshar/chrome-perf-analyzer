@@ -15,6 +15,10 @@ A Chrome DevTools extension that taps into the browser’s debugging protocol an
 
 ---
 
+<img src=".icons/demo.gif">
+
+---
+
 ## The Problem It Solves
 
 Performance problems hide behind numbers. You open the Network tab and see 300 requests. You open Coverage and see 73% unused JavaScript. You open Performance and see a 900ms long task. But you still don't know _what to fix first_ or _how much it would matter_.
