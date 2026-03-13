@@ -15,9 +15,9 @@ A Chrome DevTools extension that taps into the browser’s debugging protocol an
 
 ---
 
-<div align="center">
-  <img src="icons/demo.gif" width="80%">
-</div>
+<p align="center">
+  <img src="icons/demo.gif" width="120%">
+</p>
 
 ---
 
