@@ -1,4 +1,4 @@
-<div align="left">
+<div align="center">
 
 <img src="icons/banner.jpg"/>
 
@@ -9,9 +9,9 @@
 [![Zero Runtime Deps](https://img.shields.io/badge/runtime%20deps-zero-f97316?style=flat-square)](#)
 [![License](https://img.shields.io/badge/License-MIT-6366f1?style=flat-square)](#license)
 
-A Chrome DevTools extension that wires directly into the browser's debug protocoland tells you — in plain language — exactly why your page is slow.
-
 </div>
+
+A Chrome DevTools extension that taps into the browser’s debugging protocol and translates complex performance data into simple explanations of why your page is slow.
 
 ---
 
