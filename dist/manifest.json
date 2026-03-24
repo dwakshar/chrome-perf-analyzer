@@ -1,13 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "DevTools Performance Analyzer",
-  "short_name": "PerfAnalyzer",
+  "name": "Chrome Perf Analyzer",
+  "short_name": "Perf Analyzer",
   "version": "1.0.0",
-  "description": "Real-time performance profiling and anomaly detection.",
+  "description": "Inspect Core Web Vitals inside Chrome DevTools and surface actionable page performance issues.",
 
-  "permissions": ["debugger", "storage", "activeTab", "scripting"],
-
-  "host_permissions": ["<all_urls>"],
+  "permissions": ["alarms", "debugger", "storage"],
 
   "background": {
     "service_worker": "background/service-worker.js"

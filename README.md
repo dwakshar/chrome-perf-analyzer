@@ -11,13 +11,20 @@
 
 </div>
 
-A Chrome DevTools extension that taps into the browser’s debugging protocol and translates complex performance data into simple explanations of why your page is slow.
+Chrome Perf Analyzer is a Manifest V3 Chrome DevTools extension that captures Core Web Vitals from the inspected page and shows a lightweight issues feed inside a dedicated DevTools panel.
 
----
+## Current scope
 
-<p align="center">
-  <img src="icons/demo.gif" width="120%">
-</p>
+- Collects `LCP`, `CLS`, `FCP`, and `TTFB` from the page via `PerformanceObserver` and navigation timing.
+- Persists session state in `chrome.storage.session` so the panel can recover after service worker restarts.
+- Surfaces derived issues and a simple performance score in the DevTools panel.
+- Builds to a loadable `dist/` folder and can be packaged as a release zip.
+
+## Requirements
+
+- Node.js 18+
+- npm 9+
+- Chrome 109+
 
 ---
 
@@ -284,169 +291,37 @@ chrome-perf-analyzer/
 ### Install and Build
 
 ```bash
-git clone https://github.com/your-username/chrome-perf-analyzer.git
-cd chrome-perf-analyzer
+npm run clean
+npm run type-check
+npm run build
+npm run build:prod
+npm run watch
+npm run validate
+npm run package
+```
 
+## Local development
+
+```bash
 npm install
 npm run build
-# → dist/ folder created with compiled extension
 ```
 
-### Load into Chrome
+Then load `dist/` from `chrome://extensions` using `Load unpacked`.
 
-```
-1.  chrome://extensions
-2.  Enable "Developer mode"  (toggle, top right)
-3.  Click "Load unpacked" → select the dist/ folder
-```
+Open any page, open DevTools, and switch to the `Perf` panel.
 
-### Open the Panel
-
-Navigate to any page → `F12` → click the **⚡ Perf** tab.
-
-### Preview Without Installing
-
-Open `perf-issues-panel.html` directly in Chrome. It's a fully interactive standalone demo with mock data — the score gauge, issue list, detail pane with stack traces, and network waterfall all work without loading the extension.
-
----
-
-## Running Tests
-
-All 55 tests run in Node. No Chrome required. The suite covers every pure-function module.
+## Release flow
 
 ```bash
-npm test                  # run once
-npm run test:watch        # rerun on save
-npm run test:coverage     # + HTML report in coverage/
+npm run validate
+npm run package
 ```
 
-```
-PASS  src/all.test.ts
+This creates a production build and a zip archive in `artifacts/`.
 
-  [S3] RingBuffer                            6 tests
-  [S3] computeTimingBreakdown                5 tests
-  [S3] computeStats                          2 tests
-  [S3] formatDuration                        4 tests
-  [S4] classifyScript                        6 tests
-  [S4] determineOrigin                       6 tests
-  [S4] inferScriptName                       4 tests
-  [S4] isLikelyMinified                      2 tests
-  [S4] computeBundleScore                    5 tests
-  [S4] detectLibrariesFromUrl                5 tests
-  [S4] detectLibrariesFromSource             4 tests
-  [S4] formatBytes                           4 tests
-  [S4] renderSizeBar                         3 tests
-  ... (4 more suites)
+## Notes
 
-  Tests:  55 passed  ·  Suites: 1  ·  Time: ~4s
-```
-
----
-
-## All Commands
-
-```bash
-npm run build            # development build (source maps on)
-npm run build:prod       # production build (minified + tree-shaken)
-npm run watch            # build + rebuild on every .ts save
-npm run type-check       # TypeScript validation, no output emitted
-npm test                 # jest suite
-npm run test:watch       # jest in interactive watch mode
-npm run test:coverage    # jest + lcov + HTML coverage report
-npm run lint             # eslint across src/
-npm run clean            # delete dist/
-```
-
----
-
-## Development Workflow
-
-```bash
-# Terminal 1 — keep running
-npm run watch
-
-# Edit any .ts file and save
-# → webpack rebuilds in ~1s
-
-# In Chrome → chrome://extensions → click ↺ refresh icon
-# → re-open DevTools → ⚡ Perf tab
-```
-
-**The fastest place to add new analysis logic is `src/analyzers/`** — every function there is pure TypeScript with no Chrome API calls. You can iterate entirely with `npm run test:watch` without touching the browser.
-
----
-
-## CDP Domains Used
-
-| Domain     | Events / Commands                                                              | Purpose                        |
-| ---------- | ------------------------------------------------------------------------------ | ------------------------------ |
-| `Network`  | `requestWillBeSent` · `responseReceived` · `loadingFinished` · `loadingFailed` | Request timing + sizes         |
-| `Debugger` | `scriptParsed` · `getScriptSource`                                             | Bundle sizes + source analysis |
-| `Profiler` | `startPreciseCoverage` · `takePreciseCoverage`                                 | Dead code measurement          |
-| `Page`     | `enable`                                                                       | Navigation lifecycle           |
-| `Runtime`  | `enable`                                                                       | Execution context tracking     |
-
----
-
-## Permissions
-
-```jsonc
-"permissions": [
-  "debugger",    // attach chrome.debugger to the inspected tab
-  "storage",     // persist session state across SW restarts
-  "activeTab",   // identify the tab being inspected
-  "scripting"    // inject content script into page MAIN world
-]
-```
-
-No broad host permissions beyond content script matching rules.
-
----
-
-## Roadmap
-
-- [ ] Flame chart renderer — canvas timeline of main-thread tasks and their call stacks
-- [ ] Session export — save captures as JSON or HAR for sharing and diffing
-- [ ] Per-project budgets — `perf.config.json` threshold overrides checked into the repo
-- [ ] CI / headless mode — run analysis via Chrome CDP in pipelines, fail builds on regressions
-- [ ] Source map integration — map dead-code ranges back to original file paths and line numbers
-- [ ] Duplicate bundle detection — flag the same library appearing across multiple output chunks
-
----
-
-## Contributing
-
-```bash
-git checkout -b feature/your-thing
-
-# New analysis logic → src/analyzers/ (pure functions, no Chrome knowledge needed)
-# Tests → src/all.test.ts
-npm run test:watch
-
-# Verify in Chrome
-npm run build
-
-# PR: describe which CDP signal you're consuming and what issue it detects
-```
-
----
-
-## License
-
-MIT — see [LICENSE](./LICENSE)
-
----
-
-<div align="center">
-
-<br/>
-
-```
-  built with  chrome.debugger  ·  typescript  ·  obsessive attention to timing
-```
-
-_If this saved you debugging time, a ⭐ means a lot._
-
-<br/>
-
-</div>
+- The extension currently focuses on Core Web Vitals driven analysis. The deeper network and bundle collectors exist in the codebase but are not yet wired into the live panel flow.
+- Manifest and package versions are kept in sync automatically during builds.
+- The repository documentation is intentionally aligned with the scripts that actually exist.

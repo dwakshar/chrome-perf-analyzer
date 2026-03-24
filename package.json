@@ -1,13 +1,21 @@
 {
-  "name": "devtools-perf-analyzer",
+  "name": "chrome-perf-analyzer",
   "version": "1.0.0",
-  "description": "Chrome DevTools Performance Analyzer Extension",
+  "description": "Chrome DevTools extension for capturing Core Web Vitals and surfacing performance issues.",
   "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
-    "build": "webpack --config webpack.config.ts",
-    "watch": "webpack --config webpack.config.ts --watch",
+    "clean": "node ./scripts/clean.mjs",
+    "sync-version": "node ./scripts/sync-version.mjs",
+    "build": "npm run sync-version && webpack --config webpack.config.ts --mode development",
+    "watch": "webpack --config webpack.config.ts --mode development --watch",
     "type-check": "tsc --noEmit",
-    "build:prod": "webpack --config webpack.config.ts --mode production"
+    "build:prod": "npm run sync-version && webpack --config webpack.config.ts --mode production",
+    "package": "npm run build:prod && powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-release.ps1",
+    "validate": "npm run type-check && npm run build:prod"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.268",

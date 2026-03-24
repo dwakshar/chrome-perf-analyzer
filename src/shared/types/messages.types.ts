@@ -7,6 +7,7 @@ export type MessageType =
   | "DEVTOOLS_OPENED"
   | "DEVTOOLS_CLOSED"
   | "PANEL_READY"
+  | "CLEAR_SESSION"
   | "RECORDING_START"
   | "RECORDING_STOP"
   | "METRICS_UPDATE"
@@ -35,6 +36,7 @@ export interface SessionHydratePayload {
   sessionId: string;
   recordingState: "idle" | "recording" | "paused";
   metricsSnapshot: MetricsSnapshot | null;
+  analysisSnapshot: AnalysisResultPayload | null;
 }
 
 // ── Metrics ───────────────────────────────────────────────────────────────────

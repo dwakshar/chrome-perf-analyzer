@@ -21,104 +21,68 @@ var __webpack_exports__ = {};
   !*** ./src/background/service-worker.ts ***!
   \******************************************/
 __webpack_require__.r(__webpack_exports__);
-/**
- * service-worker.ts
- *
- * MV3 Service Worker — the coordination hub of the extension.
- *
- * Responsibilities:
- *   • Receive DEVTOOLS_OPENED / DEVTOOLS_CLOSED lifecycle events
- *   • Attach / detach chrome.debugger to the inspected tab
- *   • Route CDP events to the appropriate Collector
- *   • Push processed metrics to the DevTools panel
- *   • Persist session state in chrome.storage.session (survives SW sleep)
- *
- * MV3 note: Service workers are ephemeral — they are killed after ~30s of
- * inactivity. ALL persistent state must live in chrome.storage.session, not
- * in module-level variables.
- */
-// ─────────────────────────────────────────────────────────────────────────────
-// In-memory registry (lives only while SW is active)
-// ─────────────────────────────────────────────────────────────────────────────
-/** Map of tabId → whether debugger is currently attached */
 const attachedTabs = new Map();
-/** Map of tabId → port connected to the panel (for push messages) */
-const panelPorts = new Map();
-// ─────────────────────────────────────────────────────────────────────────────
-// Message routing
-// ─────────────────────────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleMessage(message, sender)
         .then(sendResponse)
-        .catch((err) => {
-        console.error("[sw] Message handler error:", err);
-        sendResponse({ error: String(err) });
+        .catch((error) => {
+        console.error("[sw] Message handler error:", error);
+        sendResponse({ error: String(error) });
     });
-    // Return true to keep the message channel open for async sendResponse.
     return true;
 });
-async function handleMessage(msg, sender) {
-    const effectiveTabId = (msg.tabId && msg.tabId !== -1 ? msg.tabId : undefined) ??
+async function handleMessage(message, sender) {
+    const effectiveTabId = (message.tabId && message.tabId !== -1 ? message.tabId : undefined) ??
         sender?.tab?.id;
     if (!effectiveTabId) {
-        console.warn("[sw] Dropping message without tabId:", msg.type);
+        console.warn("[sw] Dropping message without tabId:", message.type);
         return null;
     }
-    // Normalise tabId so downstream handlers always have a concrete value.
-    msg.tabId = effectiveTabId;
-    console.log(`[sw] Received: ${msg.type} for tab ${effectiveTabId}`);
-    switch (msg.type) {
+    message.tabId = effectiveTabId;
+    switch (message.type) {
         case "DEVTOOLS_OPENED":
-            return onDevToolsOpened(msg);
+            return onDevToolsOpened(message);
         case "DEVTOOLS_CLOSED":
-            return onDevToolsClosed(msg.tabId);
+            return onDevToolsClosed(effectiveTabId);
         case "PANEL_READY":
-            return onPanelReady(msg.tabId);
+            return onPanelReady(effectiveTabId);
+        case "CLEAR_SESSION":
+            return onClearSession(effectiveTabId);
         case "RECORDING_START":
             return onRecordingStart(effectiveTabId);
         case "RECORDING_STOP":
             return onRecordingStop(effectiveTabId);
         case "METRICS_UPDATE":
-            return onMetricsUpdate(effectiveTabId, msg.payload);
+            return onMetricsUpdate(effectiveTabId, message.payload);
         default:
-            console.warn(`[sw] Unhandled message type: ${msg.type}`);
+            console.warn("[sw] Unhandled message type:", message.type);
             return null;
     }
 }
-// ─────────────────────────────────────────────────────────────────────────────
-// Lifecycle handlers
-// ─────────────────────────────────────────────────────────────────────────────
-async function onDevToolsOpened(msg) {
-    const { tabId, tabUrl, sessionId } = msg.payload;
-    const key = `session:${tabId}`;
-    const existing = (await chrome.storage.session.get(key))[key];
-    // Persist session metadata in storage so it survives SW restarts while
-    // preserving any metrics that might have been recorded before DevTools opened.
-    await chrome.storage.session.set({
-        [key]: {
-            tabId,
-            tabUrl,
-            sessionId,
-            recordingState: existing?.recordingState ?? "idle",
-            openedAt: existing?.openedAt ?? Date.now(),
-            metricsSnapshot: existing?.metricsSnapshot ?? null,
-        },
+async function onDevToolsOpened(message) {
+    const { tabId, tabUrl, sessionId } = message.payload;
+    const existing = await getSessionState(tabId);
+    await setSessionState(tabId, {
+        tabId,
+        tabUrl,
+        sessionId,
+        recordingState: existing?.recordingState ?? "idle",
+        openedAt: existing?.openedAt ?? Date.now(),
+        metricsSnapshot: existing?.metricsSnapshot ?? null,
+        analysisSnapshot: existing?.analysisSnapshot ?? null,
     });
-    // Attach debugger — enables CDP domains for this tab.
     await attachDebugger(tabId);
-    console.log(`[sw] Session initialized for tab ${tabId} (${tabUrl})`);
+    console.log(`[sw] Session initialized for tab ${tabId}`);
     return { ok: true };
 }
 async function onDevToolsClosed(tabId) {
     await detachDebugger(tabId);
-    await chrome.storage.session.remove(`session:${tabId}`);
-    panelPorts.delete(tabId);
+    clearKeepAliveAlarm(tabId);
+    await chrome.storage.session.remove(getSessionKey(tabId));
     console.log(`[sw] Cleaned up session for tab ${tabId}`);
 }
 async function onPanelReady(tabId) {
-    // Re-hydrate panel with current session state after panel mounts / re-mounts.
-    const stored = await chrome.storage.session.get(`session:${tabId}`);
-    const session = stored[`session:${tabId}`];
+    const session = await getSessionState(tabId);
     if (!session) {
         console.warn(`[sw] No session found for tab ${tabId} on PANEL_READY`);
         return null;
@@ -126,73 +90,82 @@ async function onPanelReady(tabId) {
     return {
         sessionId: session.sessionId,
         recordingState: session.recordingState,
-        metricsSnapshot: session.metricsSnapshot ?? null,
+        metricsSnapshot: session.metricsSnapshot,
+        analysisSnapshot: session.analysisSnapshot,
     };
+}
+async function onClearSession(tabId) {
+    const session = await getSessionState(tabId);
+    if (!session) {
+        return { ok: true };
+    }
+    clearKeepAliveAlarm(tabId);
+    await updateSessionState(tabId, {
+        recordingState: "idle",
+        metricsSnapshot: null,
+        analysisSnapshot: null,
+    });
+    return { ok: true };
 }
 async function onRecordingStart(tabId) {
     await updateSessionState(tabId, { recordingState: "recording" });
-    // Enable Performance Timeline via CDP.
+    ensureKeepAliveAlarm(tabId);
     await sendCDPCommand(tabId, "Performance.enable", {
         timeDomain: "timeTicks",
     });
-    // HeapProfiler is not available in all environments; failures here should not
-    // cause the overall RECORDING_START handler to fail.
     try {
         await sendCDPCommand(tabId, "HeapProfiler.startTrackingHeapObjects", {
             trackAllocations: true,
         });
     }
-    catch (err) {
-        console.warn("[sw] HeapProfiler.startTrackingHeapObjects not available:", err);
+    catch (error) {
+        console.warn("[sw] HeapProfiler.startTrackingHeapObjects not available:", error);
     }
-    console.log(`[sw] Recording started for tab ${tabId}`);
 }
 async function onRecordingStop(tabId) {
     await updateSessionState(tabId, { recordingState: "idle" });
+    clearKeepAliveAlarm(tabId);
     try {
         await sendCDPCommand(tabId, "HeapProfiler.stopTrackingHeapObjects");
     }
-    catch (err) {
-        console.warn("[sw] HeapProfiler.stopTrackingHeapObjects not available:", err);
+    catch (error) {
+        console.warn("[sw] HeapProfiler.stopTrackingHeapObjects not available:", error);
     }
-    console.log(`[sw] Recording stopped for tab ${tabId}`);
 }
 async function onMetricsUpdate(tabId, payload) {
     const snapshot = {
         cwv: payload.cwv,
-        longTasks: [],
-        networkRequests: [],
-        heapTimeline: [],
-        paintEvents: [],
-        recordingStart: Date.now(),
+        longTasks: payload.longTasks,
+        networkRequests: payload.networkRequests,
+        heapTimeline: payload.heapTimeline,
+        paintEvents: payload.paintEvents,
+        recordingStart: payload.recordingStart,
     };
-    await updateSessionState(tabId, { metricsSnapshot: snapshot });
-    // Push raw metrics to the panel.
+    const analysis = {
+        issues: deriveIssuesFromSnapshot(snapshot),
+        score: computeOverallScore(snapshot),
+        recommendations: deriveRecommendations(snapshot),
+        analyzedAt: Date.now(),
+    };
+    await updateSessionState(tabId, {
+        metricsSnapshot: snapshot,
+        analysisSnapshot: analysis,
+    });
     pushToPanel(tabId, {
         type: "METRICS_UPDATE",
         tabId,
         timestamp: Date.now(),
         payload: snapshot,
     });
-    // Derive a simple analysis result from CWV alone so the Issues panel has
-    // something meaningful to display even before the deeper bundle analyzer is
-    // wired up.
-    const analysis = {
-        issues: deriveIssuesFromCWV(snapshot.cwv),
-        score: computeCwvScore(snapshot.cwv),
-        recommendations: [],
-        analyzedAt: Date.now(),
-    };
-    if (analysis.issues.length > 0) {
-        pushToPanel(tabId, {
-            type: "ANALYSIS_RESULT",
-            tabId,
-            timestamp: Date.now(),
-            payload: analysis,
-        });
-    }
+    pushToPanel(tabId, {
+        type: "ANALYSIS_RESULT",
+        tabId,
+        timestamp: Date.now(),
+        payload: analysis,
+    });
 }
-function deriveIssuesFromCWV(cwv) {
+function deriveIssuesFromSnapshot(snapshot) {
+    const { cwv, longTasks, heapTimeline } = snapshot;
     const issues = [];
     const makeId = (suffix) => `cwv_${suffix}_${Date.now()}`;
     if (cwv.lcp !== null && cwv.lcp > 2500) {
@@ -201,8 +174,18 @@ function deriveIssuesFromCWV(cwv) {
             severity: cwv.lcp > 4000 ? "critical" : "warning",
             category: "rendering",
             title: `LCP is high (${Math.round(cwv.lcp)} ms)`,
-            detail: "Largest Contentful Paint is slower than recommended. This often indicates heavy hero images or render-blocking resources.",
-            recommendation: "Optimize above-the-fold images (compression, proper sizing, lazy-load offscreen) and reduce render-blocking CSS/JS.",
+            detail: "Largest Contentful Paint is slower than recommended. This often points to heavy hero images or render-blocking resources.",
+            recommendation: "Optimize above-the-fold images and reduce render-blocking CSS and JavaScript.",
+        });
+    }
+    if (cwv.inp !== null && cwv.inp > 200) {
+        issues.push({
+            id: makeId("inp"),
+            severity: cwv.inp > 500 ? "critical" : "warning",
+            category: "javascript",
+            title: `INP is high (${Math.round(cwv.inp)} ms)`,
+            detail: "Interaction to Next Paint is slower than recommended, which usually means event handlers or follow-up rendering work are blocking responsiveness.",
+            recommendation: "Reduce synchronous work inside interaction handlers, defer non-critical updates, and break long JavaScript tasks into smaller chunks.",
         });
     }
     if (cwv.cls !== null && cwv.cls > 0.1) {
@@ -211,8 +194,8 @@ function deriveIssuesFromCWV(cwv) {
             severity: cwv.cls > 0.25 ? "critical" : "warning",
             category: "rendering",
             title: `CLS is high (${cwv.cls.toFixed(3)})`,
-            detail: "Cumulative Layout Shift is above the recommended threshold, which means elements are moving around visibly during load.",
-            recommendation: "Always reserve space for images/ads, avoid inserting content above existing content, and use transform-based animations.",
+            detail: "Cumulative Layout Shift is above the recommended threshold, so visible layout movement is occurring during load.",
+            recommendation: "Reserve space for media and ads, avoid injecting content above existing content, and prefer transform-based animations.",
         });
     }
     if (cwv.fcp !== null && cwv.fcp > 1800) {
@@ -221,8 +204,8 @@ function deriveIssuesFromCWV(cwv) {
             severity: cwv.fcp > 3000 ? "warning" : "info",
             category: "rendering",
             title: `FCP is slow (${Math.round(cwv.fcp)} ms)`,
-            detail: "First Contentful Paint is slower than recommended, indicating that the initial render is delayed.",
-            recommendation: "Reduce critical JavaScript and CSS on the initial path and consider server-side rendering or static generation where possible.",
+            detail: "First Contentful Paint is slower than recommended, indicating delayed initial rendering.",
+            recommendation: "Reduce critical-path JavaScript and CSS and consider server-side rendering or static generation.",
         });
     }
     if (cwv.ttfb !== null && cwv.ttfb > 800) {
@@ -231,21 +214,40 @@ function deriveIssuesFromCWV(cwv) {
             severity: cwv.ttfb > 1800 ? "warning" : "info",
             category: "network",
             title: `TTFB is high (${Math.round(cwv.ttfb)} ms)`,
-            detail: "Time To First Byte is slow, which usually points to backend latency or slow CDN/hosting.",
-            recommendation: "Profile server response times, enable caching (CDN, edge), and optimize database or API calls on the critical path.",
+            detail: "Time To First Byte is slower than recommended, which usually points to backend or CDN latency.",
+            recommendation: "Profile server response times, improve caching, and reduce work on the critical request path.",
+        });
+    }
+    const blockingLongTasks = longTasks.filter((task) => task.duration >= 50);
+    const worstLongTask = blockingLongTasks.reduce((max, task) => Math.max(max, task.duration), 0);
+    if (blockingLongTasks.length > 0) {
+        issues.push({
+            id: makeId("longtask"),
+            severity: blockingLongTasks.length >= 5 || worstLongTask >= 200
+                ? "critical"
+                : "warning",
+            category: "javascript",
+            title: `${blockingLongTasks.length} long task${blockingLongTasks.length === 1 ? "" : "s"} detected`,
+            detail: `Main-thread blocking work was observed during this session. The worst task took ${Math.round(worstLongTask)} ms, which can delay input and paint updates.`,
+            recommendation: "Split heavy JavaScript into smaller async chunks, avoid expensive work during input handling, and move non-urgent computation off the critical path.",
+        });
+    }
+    const heapIssue = analyzeHeapTrend(heapTimeline);
+    if (heapIssue) {
+        issues.push({
+            id: makeId("heap"),
+            severity: heapIssue.severity,
+            category: "memory",
+            title: heapIssue.title,
+            detail: heapIssue.detail,
+            recommendation: "Audit retained objects, clean up event listeners and timers, and verify that components release references after navigation or interaction cycles.",
         });
     }
     return issues;
 }
-function computeCwvScore(cwv) {
-    // Very lightweight scoring: start from 100 and subtract penalties for each
-    // metric that falls into 'needs-improvement' or 'poor' buckets.
+function computeOverallScore(snapshot) {
+    const { cwv, longTasks, heapTimeline } = snapshot;
     let score = 100;
-    const penalize = (condition, mild, strong) => {
-        if (!condition)
-            return;
-        score -= strong ?? mild;
-    };
     if (cwv.lcp !== null) {
         if (cwv.lcp > 4000)
             score -= 25;
@@ -276,29 +278,76 @@ function computeCwvScore(cwv) {
         else if (cwv.ttfb > 800)
             score -= 5;
     }
+    const blockingLongTasks = longTasks.filter((task) => task.duration >= 50);
+    if (blockingLongTasks.length >= 5)
+        score -= 18;
+    else if (blockingLongTasks.length >= 1)
+        score -= 8;
+    const heapIssue = analyzeHeapTrend(heapTimeline);
+    if (heapIssue?.severity === "critical")
+        score -= 15;
+    else if (heapIssue?.severity === "warning")
+        score -= 6;
     return Math.max(0, Math.min(100, score));
 }
-// ─────────────────────────────────────────────────────────────────────────────
-// CDP: Debugger attach / detach
-// ─────────────────────────────────────────────────────────────────────────────
+function deriveRecommendations(snapshot) {
+    const recommendations = new Set();
+    const { cwv, longTasks, heapTimeline } = snapshot;
+    if (cwv.lcp !== null && cwv.lcp > 2500) {
+        recommendations.add("Prioritize above-the-fold rendering by compressing hero assets and reducing render-blocking CSS and JavaScript.");
+    }
+    if (cwv.inp !== null && cwv.inp > 200) {
+        recommendations.add("Trim interaction handler work and defer non-urgent updates to keep input responsiveness smooth.");
+    }
+    if (cwv.cls !== null && cwv.cls > 0.1) {
+        recommendations.add("Reserve layout space for dynamic content and media to avoid visible shifts.");
+    }
+    if (cwv.ttfb !== null && cwv.ttfb > 800) {
+        recommendations.add("Reduce backend latency and improve caching on the initial navigation request.");
+    }
+    if (longTasks.some((task) => task.duration >= 50)) {
+        recommendations.add("Break long JavaScript work into smaller chunks and move non-critical work away from the main thread.");
+    }
+    if (analyzeHeapTrend(heapTimeline)) {
+        recommendations.add("Review memory retention patterns, especially event listeners, timers, and long-lived references.");
+    }
+    return Array.from(recommendations);
+}
+function analyzeHeapTrend(heapTimeline) {
+    if (heapTimeline.length < 3) {
+        return null;
+    }
+    const first = heapTimeline[0];
+    const last = heapTimeline[heapTimeline.length - 1];
+    const deltaBytes = last.usedJSHeapSize - first.usedJSHeapSize;
+    const deltaMb = deltaBytes / 1_048_576;
+    const growthRatio = first.usedJSHeapSize > 0 ? deltaBytes / first.usedJSHeapSize : 0;
+    if (deltaMb >= 30 || growthRatio >= 0.6) {
+        return {
+            severity: "critical",
+            title: `Heap usage grew sharply (+${deltaMb.toFixed(1)} MB)`,
+            detail: "Memory usage increased substantially during the session, which can indicate retained objects or cleanup not happening as expected.",
+        };
+    }
+    if (deltaMb >= 12 || growthRatio >= 0.25) {
+        return {
+            severity: "warning",
+            title: `Heap usage is trending upward (+${deltaMb.toFixed(1)} MB)`,
+            detail: "Memory growth was observed during the session. This may be normal for some pages, but it can also indicate growing retained state.",
+        };
+    }
+    return null;
+}
 async function attachDebugger(tabId) {
     if (attachedTabs.get(tabId))
         return;
-    try {
-        await chrome.debugger.attach({ tabId }, "1.3");
-        attachedTabs.set(tabId, true);
-        // Enable core CDP domains.
-        await Promise.all([
-            sendCDPCommand(tabId, "Network.enable", { maxPostDataSize: 65_536 }),
-            sendCDPCommand(tabId, "Runtime.enable"),
-            sendCDPCommand(tabId, "Page.enable"),
-        ]);
-        console.log(`[sw] Debugger attached to tab ${tabId}`);
-    }
-    catch (err) {
-        console.error(`[sw] Failed to attach debugger to tab ${tabId}:`, err);
-        throw err;
-    }
+    await chrome.debugger.attach({ tabId }, "1.3");
+    attachedTabs.set(tabId, true);
+    await Promise.all([
+        sendCDPCommand(tabId, "Network.enable", { maxPostDataSize: 65_536 }),
+        sendCDPCommand(tabId, "Runtime.enable"),
+        sendCDPCommand(tabId, "Page.enable"),
+    ]);
 }
 async function detachDebugger(tabId) {
     if (!attachedTabs.get(tabId))
@@ -307,7 +356,7 @@ async function detachDebugger(tabId) {
         await chrome.debugger.detach({ tabId });
     }
     catch {
-        // Tab may have already been closed.
+        // Tab may already be gone.
     }
     finally {
         attachedTabs.delete(tabId);
@@ -316,65 +365,70 @@ async function detachDebugger(tabId) {
 async function sendCDPCommand(tabId, method, params) {
     return chrome.debugger.sendCommand({ tabId }, method, params ?? {});
 }
-// ─────────────────────────────────────────────────────────────────────────────
-// CDP event listener — route events to collectors
-// ─────────────────────────────────────────────────────────────────────────────
 chrome.debugger.onEvent.addListener((source, method, params) => {
-    const tabId = source.tabId;
-    if (!tabId)
+    if (!source.tabId)
         return;
-    routeCDPEvent(tabId, method, params);
-});
-function routeCDPEvent(tabId, method, params) {
-    // Forward raw CDP event to the panel (if open) for display / recording.
-    pushToPanel(tabId, {
+    pushToPanel(source.tabId, {
         type: "CDP_EVENT",
-        tabId,
+        tabId: source.tabId,
         timestamp: Date.now(),
         payload: { method, params },
     });
-}
-// ─────────────────────────────────────────────────────────────────────────────
-// Push messages to panel
-// ─────────────────────────────────────────────────────────────────────────────
-/**
- * Send a message to the DevTools panel for this tab.
- * Uses chrome.runtime.sendMessage — the panel must have a listener registered.
- */
+});
 function pushToPanel(tabId, message) {
     chrome.runtime.sendMessage(message).catch(() => {
-        // Panel may not be open — this is expected and not an error.
+        // The panel may not be open.
     });
 }
-// ─────────────────────────────────────────────────────────────────────────────
-// Storage helpers
-// ─────────────────────────────────────────────────────────────────────────────
-async function updateSessionState(tabId, patch) {
-    const key = `session:${tabId}`;
-    const stored = await chrome.storage.session.get(key);
-    const current = stored[key] ?? {};
-    await chrome.storage.session.set({ [key]: { ...current, ...patch } });
+function getSessionKey(tabId) {
+    return `session:${tabId}`;
 }
-// ─────────────────────────────────────────────────────────────────────────────
-// Tab cleanup — detach debugger if tab is closed while DevTools is open
-// ─────────────────────────────────────────────────────────────────────────────
+async function getSessionState(tabId) {
+    const key = getSessionKey(tabId);
+    const stored = await chrome.storage.session.get(key);
+    return stored[key] ?? null;
+}
+async function setSessionState(tabId, value) {
+    await chrome.storage.session.set({ [getSessionKey(tabId)]: value });
+}
+async function updateSessionState(tabId, patch) {
+    const existing = await getSessionState(tabId);
+    if (!existing)
+        return;
+    await setSessionState(tabId, { ...existing, ...patch });
+}
+function getKeepAliveAlarmName(tabId) {
+    return `perf-keepalive-${tabId}`;
+}
+function ensureKeepAliveAlarm(tabId) {
+    if (typeof chrome.alarms === "undefined")
+        return;
+    chrome.alarms.create(getKeepAliveAlarmName(tabId), {
+        delayInMinutes: 0.5,
+        periodInMinutes: 0.5,
+    });
+}
+function clearKeepAliveAlarm(tabId) {
+    if (typeof chrome.alarms === "undefined")
+        return;
+    chrome.alarms.clear(getKeepAliveAlarmName(tabId)).catch(() => {
+        // Ignore missing alarms.
+    });
+}
 chrome.tabs.onRemoved.addListener((tabId) => {
-    if (attachedTabs.has(tabId)) {
-        detachDebugger(tabId).catch(console.error);
-        chrome.storage.session.remove(`session:${tabId}`).catch(console.error);
-    }
+    if (!attachedTabs.has(tabId))
+        return;
+    detachDebugger(tabId).catch(console.error);
+    clearKeepAliveAlarm(tabId);
+    chrome.storage.session.remove(getSessionKey(tabId)).catch(console.error);
 });
-// ─────────────────────────────────────────────────────────────────────────────
-// SW wake-up keepalive for long-running sessions
-// ─────────────────────────────────────────────────────────────────────────────
 if (typeof chrome.alarms !== "undefined") {
     chrome.alarms.onAlarm.addListener((alarm) => {
-        if (alarm.name === "perf-keepalive") {
+        if (alarm.name.startsWith("perf-keepalive-")) {
             console.debug("[sw] Keepalive ping");
         }
     });
 }
-console.log("[sw] Service worker initialized");
 
 
 /******/ })()
